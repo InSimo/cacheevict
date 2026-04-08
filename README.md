@@ -2,12 +2,16 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**v0.1.0** — preliminary release. The API and file format may change based
+**v0.2.0** — preliminary release. The API and file format may change based
 on feedback from initial real-world usage. See [CHANGELOG.md](CHANGELOG.md).
 
 Automatic LRU cache eviction for disk-based caches. Tracks total cache
 size and file count via a persistent mmap'd file with lock-free atomic
 counters, enabling safe coordination between multiple concurrent processes.
+
+Also provides standalone cache management functions (`Stats`, `Clear`,
+`Trim`) that work by scanning the directory tree without requiring the
+mmap handler. These are suitable for network caches or manual maintenance.
 
 ## AI Disclaimer
 
@@ -48,6 +52,33 @@ handler.UseFile(path) // update mtime for LRU
 handler.BeforeRemove(path)
 os.Remove(path)
 ```
+
+### Standalone cache management (no mmap required)
+
+```go
+cfg := cacheevict.Config{
+    BaseDir:      "/path/to/cache",
+    SubdirPath:   func(idx int) string { return fmt.Sprintf("%04x", idx) },
+    IsCachedFile: func(name string) bool { return strings.HasSuffix(name, ".dat") },
+}
+
+// Scan and report cache size:
+totalSize, totalFiles, err := cacheevict.Stats(cfg)
+
+// Remove all cached files:
+err = cacheevict.Clear(cfg)
+
+// Trim to size/file/age limits (oldest files removed first):
+err = cacheevict.Trim(cfg, 10*1024*1024*1024, 0, 30*24*time.Hour)
+
+// Open handler only if tracking file exists (for cooperative updates):
+handler, err := cacheevict.OpenIfExists(cfg) // nil, nil if no .cache-sizes
+```
+
+These functions walk the directory tree using cached `Readdirnames` for
+intermediate levels (skipping stat calls, ~20x faster) and `ReadDir` +
+`Info()` only at leaf directories. If the `.cache-sizes` mmap file exists,
+`Clear` and `Trim` cooperatively update its counters via `BeforeRemove`.
 
 ## Design
 
